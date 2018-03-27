@@ -1,122 +1,73 @@
 pragma solidity ^0.4.14;
-
-import './SafeMath.sol';
-import './Ownable.sol';
-
-contract Payroll is Ownable {
-    using SafeMath for uint;
-    struct Employee {
-        address id;
-        uint salary;
-        uint lastPayday;
-    }
+contract SplitFund{
     
-    uint constant payDuration = 10 seconds;
-
-    uint totalSalary;
-    uint totalEmployee;
-    address[] employeeList;
-    mapping(address => Employee) public employees;
-
-
-    event NewEmployee(
-        address employee
-    );
-    event UpdateEmployee(
-        address employee
-    );
-    event RemoveEmployee(
-        address employee
-    );
-    event NewFund(
-        uint balance
-    );
-    event GetPaid(
-        address employee
-    );
-
-    modifier employeeExit(address employeeId) {
-        var employee = employees[employeeId];
-        assert(employee.id != 0x0);
+    mapping (address => uint) paidForTheGas;
+    
+    struct shareHodler{
+        address wallet;
+        uint percentage;
+    }
+    uint gaswithHold = 0;
+    mapping(address => shareHodler) shareBook;
+    uint totalPercentage = 0;
+    address _owner = 0x0;
+    address [] addressList;
+    
+    modifier _onlyOwner(){
+        require(msg.sender == _owner);    
         _;
     }
     
-    function _partialPaid(Employee employee) private {
-        uint payment = employee.salary
-            .mul(now.sub(employee.lastPayday))
-            .div(payDuration);
-        employee.id.transfer(payment);
+    modifier _gasCredit(){
+        uint gasInitial = gasleft();
+        _;
+        uint gasUsed = gasInitial - gasleft() + 30000;
+        uint gasCost = gasUsed * tx.gasprice;
+        paidForTheGas[msg.sender] += gasCost;
+        gaswithHold += gasCost;
     }
-
-    function checkEmployee(uint index) returns (address employeeId, uint salary, uint lastPayday) {
-        employeeId = employeeList[index];
-        var employee = employees[employeeId];
-        salary = employee.salary;
-        lastPayday = employee.lastPayday;
-    }
-    
-    function addEmployee(address employeeId, uint salary) onlyOwner {
-        var employee = employees[employeeId];
-        assert(employee.id == 0x0);
-
-        employees[employeeId] = Employee(employeeId, salary.mul(1 ether), now);
-        totalSalary = totalSalary.add(employees[employeeId].salary);
-        totalEmployee = totalEmployee.add(1);
-        employeeList.push(employeeId);
-        NewEmployee(employeeId);
+    bool mutex = false;
+    modifier _isMutexed(){
+        require(!mutex);
+        mutex = true;
+        _;
+        mutex = false;
+        return;
     }
     
-    function removeEmployee(address employeeId) onlyOwner employeeExit(employeeId) {
-        var employee = employees[employeeId];
-
-        _partialPaid(employee);
-        totalSalary = totalSalary.sub(employee.salary);
-        delete employees[employeeId];
-        totalEmployee = totalEmployee.sub(1);
-        RemoveEmployee(employeeId);
+    event newFund(
+        uint  balance
+    );
+    
+    function addPeople(address wallet, uint percentage)  _onlyOwner _gasCredit  public{
+        shareHodler storage p = shareBook[wallet];
+        require(p.wallet == 0x0);
+        require(totalPercentage + percentage <= 100);
+        shareBook[wallet] = shareHodler(wallet, percentage);
+        totalPercentage += percentage;
+        addressList.push(wallet);
     }
     
-    function updateEmployee(address employeeId, uint salary) onlyOwner employeeExit(employeeId) {
-        var employee = employees[employeeId];
-
-        _partialPaid(employee);
-        totalSalary = totalSalary.sub(employee.salary);
-        employee.salary = salary.mul(1 ether);
-        employee.lastPayday = now;
-        totalSalary = totalSalary.add(employee.salary);
-        UpdateEmployee(employeeId);
+    function SplitFund() public{
+        _owner = msg.sender;
     }
     
-    function addFund() payable returns (uint) {
-        NewFund(this.balance);
-        return this.balance;
+    function () payable public{}
+    
+    function getBalance() public view returns(uint){
+        return address(this).balance;
     }
     
-    function calculateRunway() returns (uint) {
-        return this.balance.div(totalSalary);
-    }
-    
-    function hasEnoughFund() returns (bool) {
-        return calculateRunway() > 0;
-    }
-    
-    function getPaid() employeeExit(msg.sender) {
-        var employee = employees[msg.sender];
-
-        uint nextPayday = employee.lastPayday.add(payDuration);
-        assert(nextPayday < now);
-
-        employee.lastPayday = nextPayday;
-        employee.id.transfer(employee.salary);
-        GetPaid(employee.id);
-    }
-
-    function checkInfo() returns (uint balance, uint runway, uint employeeCount) {
-        balance = this.balance;
-        employeeCount = totalEmployee;
-
-        if (totalSalary > 0) {
-            runway = calculateRunway();
+    function withdraw() _isMutexed _gasCredit public{
+        require(address(this).balance - gaswithHold > 0);
+        uint splitPayForeach = (address(this).balance - gaswithHold) / 100;
+        gaswithHold = 0;
+        uint addressLen = addressList.length;
+        for(uint i = 0 ; i < addressLen ; i++){
+            address tmp = addressList[i];
+            shareHodler storage tHolder = shareBook[tmp];
+            tmp.transfer(tHolder.percentage * splitPayForeach + paidForTheGas[tmp]);
+            paidForTheGas[tmp] = 0;
         }
     }
 }
